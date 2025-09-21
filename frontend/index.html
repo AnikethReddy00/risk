@@ -1,0 +1,174 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Contract Reviewer</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 2rem;
+        }
+
+        .card {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        .pill {
+            display: inline-block;
+            margin-left: 0.5rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            background: #eee;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Contract Reviewer</h1>
+    <div class="toolbar">
+        <input type="file" id="file"
+            accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" />
+        <button id="goFile">Analyze File</button>
+        <span id="statusFile"></span>
+    </div>
+    <hr />
+    <textarea id="input" rows="12" cols="80" placeholder="Paste contract text here"></textarea>
+    <br />
+    <button id="go">Analyze</button>
+    <div id="status"></div>
+    <div id="out"></div>
+
+    <script>
+        // Single source of truth for backend URL (assumes backend on :8000)
+        const api = (path) => `${location.origin.replace(/:\d+$/, ':8000')}${path}`;
+
+        const out = document.getElementById('out');
+
+        function el(tag, props = {}) {
+            const e = document.createElement(tag);
+            Object.assign(e, props);
+            return e;
+        }
+
+        function render(data) {
+            out.innerHTML = '';
+
+            // Heuristic flags
+            if (data.heuristic_flags && data.heuristic_flags.length) {
+                const card = el('div', { className: 'card' });
+                card.appendChild(el('h2', { innerText: 'Heuristic Flags' }));
+                const ul = el('ul');
+                data.heuristic_flags.forEach(f => {
+                    const li = el('li');
+                    li.innerHTML = `<b>${f.label}</b>: <em>${f.snippet}</em>`;
+                    ul.appendChild(li);
+                });
+                card.appendChild(ul);
+                out.appendChild(card);
+            }
+
+            // Risks
+            const risks = el('div', { className: 'card' });
+            risks.appendChild(el('h2', { innerText: 'Risks' }));
+            const rlist = el('ul');
+            (data.risks || []).forEach(r => {
+                const li = el('li');
+                const sev = el('span', { className: 'pill', innerText: r.severity || '—' });
+                li.innerHTML = `<b>“${(r.quote || '').slice(0, 180)}”</b> — ${r.why || ''}`;
+                li.appendChild(sev);
+                rlist.appendChild(li);
+            });
+            risks.appendChild(rlist);
+            out.appendChild(risks);
+
+            // Missing / unclear
+            const miss = el('div', { className: 'card' });
+            miss.appendChild(el('h2', { innerText: 'Missing or Unclear' }));
+            const mlist = el('ul');
+            (data.missing_or_unclear || []).forEach(x => {
+                const li = el('li');
+                li.innerHTML = `<b>${x.item}</b>: ${x.note}`;
+                mlist.appendChild(li);
+            });
+            miss.appendChild(mlist);
+            out.appendChild(miss);
+
+            // Fix suggestions
+            const fix = el('div', { className: 'card' });
+            fix.appendChild(el('h2', { innerText: 'Fix Suggestions' }));
+            const flist = el('ul');
+            (data.fix_suggestions || []).forEach(s => {
+                const li = el('li');
+                li.innerText = s;
+                flist.appendChild(li);
+            });
+            fix.appendChild(flist);
+            out.appendChild(fix);
+
+            // Summary
+            const sum = el('div', { className: 'card' });
+            sum.appendChild(el('h2', { innerText: 'Plain-English Summary' }));
+            const slist = el('ul');
+            (data.summary || []).forEach(s => {
+                const li = el('li');
+                li.innerText = s;
+                slist.appendChild(li);
+            });
+            sum.appendChild(slist);
+            out.appendChild(sum);
+        }
+
+        // Analyze pasted text
+        document.getElementById('go').onclick = async () => {
+            const txt = document.getElementById('input').value.trim();
+            const status = document.getElementById('status');
+            if (txt.length < 30) {
+                alert('Paste a longer contract.');
+                return;
+            }
+            status.textContent = 'Analyzing...';
+            try {
+                const res = await fetch(api('/api/analyze'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: txt })
+                });
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+                render(data);
+                status.textContent = '';
+            } catch (e) {
+                console.error(e);
+                status.textContent = 'Error: ' + (e.message || 'failed');
+            }
+        };
+
+        // Analyze uploaded file
+        document.getElementById('goFile').onclick = async () => {
+            const f = document.getElementById('file').files?.[0];
+            const status = document.getElementById('statusFile');
+            if (!f) { alert('Choose a file first.'); return; }
+            status.textContent = 'Uploading & analyzing...';
+            const fd = new FormData();
+            fd.append('file', f);
+            try {
+                const res = await fetch(api('/api/analyze_file'), { method: 'POST', body: fd });
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+                render(data);
+                status.textContent = '';
+            } catch (e) {
+                console.error(e);
+                status.textContent = 'Error: ' + (e.message || 'failed');
+            }
+        };
+    </script>
+
+</body>
+
+</html>
